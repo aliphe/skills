@@ -70,14 +70,7 @@ rm -rf "$DEST/.git"
 rm -rf "$TMP"
 ```
 
-### 5. Register with agent harnesses
-
-```bash
-cd /Users/matthias/work/perso/skills
-./link.sh
-```
-
-### 6. Commit and push
+### 5. Commit and push
 
 ```bash
 cd /Users/matthias/work/perso/skills
@@ -86,7 +79,7 @@ git commit -m "feat: add SKILL_NAME skill from GITHUB_URL"
 git push
 ```
 
-### 7. Confirm
+### 6. Confirm
 
 Report:
 - Skill name and description (from frontmatter)
