@@ -5,7 +5,7 @@ description: Add a new skill from a GitHub URL to this personal skills repo, reg
 
 # Add Skill
 
-Adds a skill from a GitHub URL to `/Users/matthias/work/perso/skills`, registers it via `link.sh`, commits, and pushes.
+Adds a skill from a GitHub URL to `/Users/matthias/work/perso/skills`, registers it with agent harnesses, commits, and pushes.
 
 ## Supported URL Formats
 
@@ -70,7 +70,21 @@ rm -rf "$DEST/.git"
 rm -rf "$TMP"
 ```
 
-### 5. Commit and push
+### 5. Register with agent harnesses
+
+`npx skills` installs to `~/.agents/skills/` (universal path, covers Pi and others) but does **not** automatically write to `~/.config/opencode/skills/`. Add a symlink there manually:
+
+```bash
+ln -sfn "$HOME/.agents/skills/SKILL_NAME" "$HOME/.config/opencode/skills/SKILL_NAME"
+```
+
+Then update the universal install to pick up the new skill:
+
+```bash
+npx skills add aliphe/skills --skill SKILL_NAME --all -g -y
+```
+
+### 6. Commit and push
 
 ```bash
 cd /Users/matthias/work/perso/skills
@@ -79,7 +93,7 @@ git commit -m "feat: add SKILL_NAME skill from GITHUB_URL"
 git push
 ```
 
-### 6. Confirm
+### 7. Confirm
 
 Report:
 - Skill name and description (from frontmatter)
