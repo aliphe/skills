@@ -47,7 +47,12 @@ Need to respond to something?
     └── Use KEY PROP on component
 ```
 
+## Core Rule: Be Honest About Dependencies
+
+Every value from render scope used inside an Effect must be in its dependency array. `[]` doesn't mean "on mount" — it means "uses nothing from render scope". Lying causes stale-closure bugs (e.g. intervals that increment only once). Instead of omitting a dependency, remove the need for it: functional updates (`setX(x => …)`), `useReducer` with actions, moving functions inside the Effect, hoisting pure helpers, or `useCallback`. Effects capture their own render's props/state; cleanup runs before every re-run, not just unmount.
+
 ## Detailed Guidance
 
 - [Anti-Patterns](./anti-patterns.md) - Common mistakes with fixes
 - [Better Alternatives](./alternatives.md) - useMemo, key prop, lifting state, useSyncExternalStore
+- [Dependency Rules](./dependency-rules.md) - Correctly writing an Effect: dep honesty, functional updates, useReducer, functions as deps, cleanup timing
