@@ -10,7 +10,7 @@ Two-axis review of the diff between `HEAD` and a fixed point the user supplies:
 
 Both axes run as **parallel sub-agents** so they don't pollute each other's context, then this skill aggregates their findings.
 
-The issue tracker should have been provided to you. If `docs/agents/issue-tracker.md` is missing, tell the user to run `/setup-matt-pocock-skills`.
+The issue tracker should have been provided to you. If `docs/agents/issue-tracker.md` is missing, the spec may still be resolvable from the branch name or commit messages (see step 2); only if that fails too, tell the user to run `/setup-matt-pocock-skills`.
 
 ## Process
 
@@ -26,10 +26,11 @@ Before going further, confirm the fixed point resolves (`git rev-parse <fixed-po
 
 Look for the originating spec, in this order:
 
-1. Issue references in the commit messages (`#123`, `Closes #45`, GitLab `!67`, etc.), fetched via the workflow in `docs/agents/issue-tracker.md`.
-2. A path the user passed as an argument.
-3. A spec file under `docs/`, `specs/`, or `.scratch/` matching the branch name or feature.
-4. If nothing is found, ask the user where the spec is. If they say there isn't one, the **Spec** sub-agent will skip and report "no spec available".
+1. **Linear ticket from the branch name or commit messages.** Run `git branch --show-current` and check the branch name; if nothing, scan `git log <fixed-point>..HEAD --oneline`. Look for a Linear issue key matching `[A-Za-z]{3}-\d{3,}` (three letters, hyphen, at least three digits — e.g. `SPE-123`, `sup-345`, `TEC-11004`), possibly embedded in a slug like `feature/spe-921-short-name` or a subject like `feat(SPE-914): ...`. On a match, load the `linear-cli` skill and fetch the issue (`linear issue view <KEY-UPPERCASED>`); its description is the spec. If the CLI errors (unknown key, auth), move on to the next source.
+2. Issue references in the commit messages (`#123`, `Closes #45`, GitLab `!67`, etc.), fetched via the workflow in `docs/agents/issue-tracker.md`.
+3. A path the user passed as an argument.
+4. A spec file under `docs/`, `specs/`, or `.scratch/` matching the branch name or feature.
+5. If nothing is found, ask the user where the spec is. If they say there isn't one, the **Spec** sub-agent will skip and report "no spec available".
 
 ### 3. Identify the standards sources
 
