@@ -24,13 +24,15 @@ Before going further, confirm the fixed point resolves (`git rev-parse <fixed-po
 
 ### 2. Identify the spec source
 
-Look for the originating spec, in this order:
+Look for the originating spec, in this order. Explicit input from the user always wins over anything inferred from the repo; only if the prompt carries no spec at all do the history checks run.
 
-1. **Linear ticket from the branch name or commit messages.** Run `git branch --show-current` and check the branch name; if nothing, scan `git log <fixed-point>..HEAD --oneline`. Look for a Linear issue key matching `[A-Za-z]{3}-\d{3,}` (three letters, hyphen, at least three digits — e.g. `SPE-123`, `sup-345`, `TEC-11004`), possibly embedded in a slug like `feature/spe-921-short-name` or a subject like `feat(SPE-914): ...`. On a match, load the `linear-cli` skill and fetch the issue (`linear issue view <KEY-UPPERCASED>`); its description is the spec. If the CLI errors (unknown key, auth), move on to the next source.
-2. Issue references in the commit messages (`#123`, `Closes #45`, GitLab `!67`, etc.), fetched via the workflow in `docs/agents/issue-tracker.md`.
-3. A path the user passed as an argument.
-4. A spec file under `docs/`, `specs/`, or `.scratch/` matching the branch name or feature.
-5. If nothing is found, ask the user where the spec is. If they say there isn't one, the **Spec** sub-agent will skip and report "no spec available".
+1. **Spec in the prompt.** If the user's request itself describes what the change should do (the spec is "the prompt only"), use that text verbatim as the spec and skip all further searching.
+2. A spec path or document the user passed as an argument.
+3. **Linear ticket from the branch name.** Run `git branch --show-current` (one cheap command, only reached because the prompt has no spec) and look for a Linear issue key matching `[A-Za-z]{3}-\d{3,}` (three letters, hyphen, at least three digits — e.g. `SPE-123`, `sup-345`, `TEC-11004`), possibly embedded in a slug like `feature/spe-921-short-name`. On a match, load the `linear-cli` skill and fetch the issue (`linear issue view <KEY-UPPERCASED>`); its description is the spec. If the CLI errors (unknown key, auth), move on.
+4. **Linear ticket from commit messages.** Scan `git log <fixed-point>..HEAD --oneline` for the same key pattern (e.g. `feat(SPE-914): ...`) and fetch as above.
+5. Issue references in the commit messages (`#123`, `Closes #45`, GitLab `!67`, etc.), fetched via the workflow in `docs/agents/issue-tracker.md`.
+6. A spec file under `docs/`, `specs/`, or `.scratch/` matching the branch name or feature.
+7. If nothing is found, ask the user where the spec is. If they say there isn't one, the **Spec** sub-agent will skip and report "no spec available".
 
 ### 3. Identify the standards sources
 
