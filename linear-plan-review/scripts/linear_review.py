@@ -27,10 +27,12 @@ import argparse
 import difflib
 import hashlib
 import json
+import mimetypes
 import os
 import re
 import subprocess
 import sys
+import urllib.parse
 from datetime import datetime, timezone
 
 STATE_DIR = os.environ.get("LINEAR_REVIEW_STATE_DIR") or os.path.expanduser(
@@ -67,6 +69,7 @@ query($id: String!, $first: Int!) {
 
 VIEWER_QUERY = "query { viewer { id name displayName email } }"
 
+IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 HEADING_RE = re.compile(r"^#{1,6}[ \t]")
 WORD_RE = re.compile(r"[a-z0-9]+")
 
@@ -157,13 +160,24 @@ def emit(payload: dict) -> None:
 
 
 def normalize(text: str) -> str:
-    """Canonical form that ignores reflow, list-marker style and the blank line
-    Linear inserts after a heading, so none of those read as a change."""
+    """Canonical form for comparison.
+
+    Ignores reflow, list-marker style, the blank line Linear inserts after a
+    heading, the angle brackets Linear puts around an inline link destination,
+    and where an image sits relative to the text around it: Linear promotes an
+    inline image to a block of its own, so "Text: ![img](u)" and
+    "Text:\n\n![img](u)" are the same document.
+    """
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    lines = [
-        re.sub(r"^(\s*)[-*+][ \t]+", r"\1- ", line.rstrip())
-        for line in text.split("\n")
-    ]
+    lines: list[str] = []
+    for line in text.split("\n"):
+        line = re.sub(r"^(\s*)[-*+][ \t]+", r"\1- ", line.rstrip())
+        line = re.sub(r"\]\(<([^>]+)>\)", r"](\1)", line)
+        if IMAGE_RE.search(line):
+            line = IMAGE_RE.sub(lambda match: "\n" + match.group(0) + "\n", line)
+        # rstrip again: pulling an image off the line leaves the space before it.
+        lines.extend(part.rstrip() for part in line.split("\n"))
+
     out: list[str] = []
     for line in lines:
         if not line:
@@ -172,7 +186,21 @@ def normalize(text: str) -> str:
         out.append(line)
     while out and out[-1] == "":
         out.pop()
-    return "\n".join(out)
+
+    def image_only(line: str) -> bool:
+        return bool(IMAGE_RE.fullmatch(line.strip()))
+
+    tightened: list[str] = []
+    for line in out:
+        if line == "" and tightened and image_only(tightened[-1]):
+            continue
+        tightened.append(line)
+    result: list[str] = []
+    for index, line in enumerate(tightened):
+        if line == "" and index + 1 < len(tightened) and image_only(tightened[index + 1]):
+            continue
+        result.append(line)
+    return "\n".join(result)
 
 
 def heading_key(heading: str) -> str:
@@ -336,6 +364,14 @@ def sha(text: str) -> str:
     return hashlib.sha256(normalize(text).encode("utf-8")).hexdigest()
 
 
+def file_digest(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
@@ -359,6 +395,294 @@ def read_text(path: str, what: str) -> str:
         die(f"no {what} file at {path}")
     with open(path, encoding="utf-8") as handle:
         return handle.read()
+
+
+# --------------------------------------------------------------------------
+# images
+# --------------------------------------------------------------------------
+#
+# --------------------------------------------------------------------------
+# images
+# --------------------------------------------------------------------------
+#
+# A reference to a local file ("![](./diagram.png)") means nothing to anyone
+# reading the document: Linear cannot fetch the author's disk, so the image
+# renders as "failed to load image". Local files are uploaded first and the
+# reference is rewritten to the asset URL Linear gives back.
+#
+# Three things Linear does by itself, confirmed against live documents, and each
+# one shapes what this code must not do:
+#
+#   * Remote images are re-hosted by Linear on write, so an http(s) URL is left
+#     exactly as it is.
+#   * Raw HTML does not survive its markdown. A left-alone <img src="..."> comes
+#     back as `<img src="[url](<url>)">`, a broken link inside an attribute. An
+#     <img> tag is therefore always converted to markdown, uploaded or not.
+#   * Reference-style images are flattened: `![alt][ref]` plus `[ref]: url` is
+#     stored as `![alt](url)` and the definition is dropped. Inlining them here
+#     is what keeps a second `apply` from rewriting the same body forever.
+
+INLINE_IMAGE_RE = re.compile(r"!\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))")
+HTML_IMG_TAG_RE = re.compile(r"<img\b[^>]*>", re.IGNORECASE)
+SRC_ATTR_RE = re.compile(r"\bsrc\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))", re.IGNORECASE)
+ALT_ATTR_RE = re.compile(r"\balt\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))", re.IGNORECASE)
+REF_IMAGE_USE_RE = re.compile(r"!\[([^\]]*)\]\[([^\]]*)\]")
+REF_LINK_USE_RE = re.compile(r"(?<!!)\[([^\]]*)\]\[([^\]]*)\]")
+REF_DEF_RE = re.compile(r"^[ \t]*\[([^\]]+)\]:[ \t]*(\S+)[ \t]*$", re.MULTILINE)
+
+
+def attr_value(match: re.Match | None) -> str:
+    if not match:
+        return ""
+    return next((group for group in match.groups() if group), "")
+
+
+def image_spans(text: str) -> list[tuple[int, int, str]]:
+    """Inline markdown image URLs, as (start, end, url) spans."""
+    spans: list[tuple[int, int, str]] = []
+    for match in INLINE_IMAGE_RE.finditer(text):
+        for index in (1, 2):
+            if match.group(index):
+                start, end = match.span(index)
+                spans.append((start, end, match.group(index)))
+                break
+    return sorted(spans)
+
+
+def html_image_tags(text: str) -> list[tuple[int, int, str, str]]:
+    """Whole <img> tags, as (start, end, src, alt)."""
+    tags: list[tuple[int, int, str, str]] = []
+    for match in HTML_IMG_TAG_RE.finditer(text):
+        src = attr_value(SRC_ATTR_RE.search(match.group(0)))
+        if not src:
+            continue
+        tags.append((match.start(), match.end(), src, attr_value(ALT_ATTR_RE.search(match.group(0)))))
+    return tags
+
+
+def reference_images(text: str) -> list[tuple[int, int, str, str]]:
+    """![alt][name] usages, as (start, end, alt, name). A collapsed `![alt][]`
+    takes its name from the alt text."""
+    usages: list[tuple[int, int, str, str]] = []
+    for match in REF_IMAGE_USE_RE.finditer(text):
+        alt, name = match.group(1), match.group(2) or match.group(1)
+        usages.append((match.start(), match.end(), alt, name.strip().lower()))
+    return usages
+
+
+def reference_links(text: str) -> list[tuple[int, int, str, str]]:
+    """[label][name] usages that are links rather than images, as
+    (start, end, label, name). A collapsed `[label][]` takes its name from the
+    label. Shortcut references (`[name]` alone) are deliberately not matched:
+    they are indistinguishable from ordinary bracketed text."""
+    usages: list[tuple[int, int, str, str]] = []
+    for match in REF_LINK_USE_RE.finditer(text):
+        label, name = match.group(1), match.group(2) or match.group(1)
+        usages.append((match.start(), match.end(), label, name.strip().lower()))
+    return usages
+
+
+def reference_definitions(text: str) -> dict[str, tuple[int, int, str]]:
+    """Definition lines, as name -> (start, end, url). The span includes the
+    trailing newline so a dropped definition leaves no blank line behind."""
+    definitions: dict[str, tuple[int, int, str]] = {}
+    for match in REF_DEF_RE.finditer(text):
+        end = match.end() + (1 if match.end() < len(text) and text[match.end()] == "\n" else 0)
+        definitions[match.group(1).strip().lower()] = (match.start(), end, match.group(2))
+    return definitions
+
+
+def is_remote(url: str) -> bool:
+    return url.strip().lower().startswith(
+        ("http://", "https://", "data:", "mailto:", "#", "tel:")
+    )
+
+
+def resolve_local(url: str, draft_dir: str) -> str | None:
+    """The file a reference points at, relative to the draft or the cwd."""
+    raw = url.strip()
+    if raw.lower().startswith("file://"):
+        raw = raw[7:]
+    raw = urllib.parse.unquote(raw)
+    candidates = [raw] if os.path.isabs(raw) else [
+        os.path.join(draft_dir, raw),
+        os.path.join(os.getcwd(), raw),
+    ]
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    return None
+
+
+def collect_images(body: str, draft_path: str) -> list[dict]:
+    """Describe every image reference, without uploading anything."""
+    draft_dir = os.path.dirname(os.path.abspath(draft_path))
+    items: list[dict] = []
+
+    def describe(url: str, syntax: str) -> None:
+        if is_remote(url):
+            items.append(
+                {
+                    "reference": url,
+                    "syntax": syntax,
+                    "kind": "remote",
+                    "path": None,
+                    "exists": True,
+                    "bytes": None,
+                }
+            )
+            return
+        resolved = resolve_local(url, draft_dir)
+        items.append(
+            {
+                "reference": url,
+                "syntax": syntax,
+                "kind": "local",
+                "path": resolved,
+                "exists": resolved is not None,
+                "bytes": os.path.getsize(resolved) if resolved else None,
+            }
+        )
+
+    for _, _, url in image_spans(body):
+        describe(url, "markdown")
+    for _, _, url, _ in html_image_tags(body):
+        describe(url, "html")
+    for name, (_, _, url) in reference_definitions(body).items():
+        if any(seen == name for _, _, _, seen in reference_images(body)):
+            describe(url, "reference")
+    return items
+
+
+def upload_asset(path: str, public: bool) -> str:
+    """Upload one file and return the asset URL to put in the markdown.
+
+    `makePublic` stays false by default because that is what Linear itself does
+    for document images: the asset lands on uploads.linear.app and the Linear
+    client authenticates the request. Public puts it on public.linear.app, which
+    anyone can read without signing in.
+    """
+    filename = os.path.basename(path)
+    content_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    size = os.path.getsize(path)
+    query = (
+        "mutation {\n"
+        f"  fileUpload(filename: {json.dumps(filename)}, "
+        f"contentType: {json.dumps(content_type)}, size: {size}, "
+        f"makePublic: {str(public).lower()}) {{\n"
+        "    success\n"
+        "    uploadFile { uploadUrl assetUrl headers { key value } }\n"
+        "  }\n"
+        "}"
+    )
+    payload = api(query).get("fileUpload") or {}
+    if not payload.get("success"):
+        raise UserError(f"Linear refused the upload of {path} ({content_type}, {size} bytes)")
+
+    upload = payload["uploadFile"]
+    args = [
+        "curl", "-sf", "-X", "PUT",
+        "--upload-file", path,
+        "-H", f"Content-Type: {content_type}",
+    ]
+    for header in upload["headers"]:
+        args += ["-H", f'{header["key"]}: {header["value"]}']
+    args.append(upload["uploadUrl"])
+    proc = subprocess.run(args, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise UserError(f"upload of {path} failed: {proc.stderr.strip() or proc.returncode}")
+    return upload["assetUrl"]
+
+
+def prepare_body(
+    body: str,
+    draft_path: str,
+    public: bool,
+    upload: bool = True,
+    cache: dict[str, str] | None = None,
+) -> tuple[str, list[dict]]:
+    """Rewrite a body into the form Linear actually stores.
+
+    Local image files are uploaded and their references replaced with the asset
+    URL; remote URLs are handed to Linear, which re-hosts them itself; <img> tags
+    and reference-style images and links are inlined, because Linear keeps no raw
+    HTML and flattens references on write. Writing the flattened form is what
+    makes a second `apply` of the same draft a no-op instead of an endless
+    rewrite.
+
+    `cache` maps a file's content digest to its asset URL and is persisted in the
+    review session, so re-applying reuses the assets already in the document
+    rather than uploading the same screenshot again under a new URL.
+    """
+    draft_dir = os.path.dirname(os.path.abspath(draft_path))
+    cache = {} if cache is None else cache
+    replacements: dict[tuple[int, int], str] = {}
+    uploads: list[dict] = []
+
+    def target(url: str) -> str:
+        if is_remote(url) or not upload:
+            return url
+        resolved = resolve_local(url, draft_dir)
+        if not resolved:
+            raise UserError(f"image file not found: {url}")
+        key = f"{file_digest(resolved)}:{public}"
+        if key not in cache:
+            cache[key] = upload_asset(resolved, public)
+            uploads.append(
+                {
+                    "reference": url,
+                    "path": resolved,
+                    "bytes": os.path.getsize(resolved),
+                    "assetUrl": cache[key],
+                    "public": public,
+                }
+            )
+        return cache[key]
+
+    definitions = reference_definitions(body)
+
+    # Inline images: the URL is the only part that changes.
+    for start, end, url in image_spans(body):
+        replacements[(start, end)] = target(url)
+
+    # <img> tags: the whole tag becomes markdown. Only images are uploaded, so a
+    # link to a local file keeps its path rather than pushing a stray file into
+    # Linear's asset store.
+    for start, end, url, alt in html_image_tags(body):
+        replacements[(start, end)] = f"![{alt}]({target(url)})"
+
+    # Reference-style images: inline them, uploading the file they point at.
+    image_usages = reference_images(body)
+    for start, end, alt, name in image_usages:
+        if name in definitions:
+            replacements[(start, end)] = f"![{alt}]({target(definitions[name][2])})"
+
+    # Reference-style links: inline them, leaving the destination untouched.
+    link_usages = reference_links(body)
+    for start, end, label, name in link_usages:
+        if name in definitions:
+            replacements[(start, end)] = f"[{label}]({definitions[name][2]})"
+
+    # A definition whose every usage is now inline is dead weight Linear would
+    # drop anyway. One still referenced by an untouched shortcut stays.
+    inlined: dict[str, int] = {}
+    for _, _, _, name in (*image_usages, *link_usages):
+        if name in definitions:
+            inlined[name] = inlined.get(name, 0) + 1
+    blanked = body
+    for start, end, _ in definitions.values():
+        blanked = blanked[:start] + " " * (end - start) + blanked[end:]
+    for name, (start, end, _) in definitions.items():
+        remaining = len(
+            re.findall(r"\[" + re.escape(name) + r"\]", blanked, re.IGNORECASE)
+        )
+        if remaining == inlined.get(name, 0):
+            replacements[(start, end)] = ""
+
+    rewritten = body
+    for start, end in sorted(replacements, reverse=True):
+        rewritten = rewritten[:start] + replacements[(start, end)] + rewritten[end:]
+    return rewritten, uploads
 
 
 # --------------------------------------------------------------------------
@@ -399,6 +723,26 @@ def cmd_plan(args: argparse.Namespace) -> int:
     existing = document.get("content") or ""
     result = compare(existing, draft)
 
+    images = collect_images(draft, args.draft)
+    local_images = [item for item in images if item["kind"] == "local"]
+    html_images = [item for item in images if item["syntax"] == "html"]
+    missing = [item["reference"] for item in local_images if not item["exists"]]
+    warnings = []
+    if local_images:
+        warnings.append(
+            f"{len(local_images)} local image reference(s) will be uploaded to Linear on apply; "
+            "the markdown will be rewritten to the asset URLs"
+        )
+    if html_images:
+        warnings.append(
+            f"{len(html_images)} <img> tag(s) will be converted to markdown: Linear keeps no "
+            "raw HTML and renders an <img> tag as a broken link"
+        )
+    if missing:
+        warnings.append(
+            "these image files do not exist and Linear cannot load them: " + ", ".join(missing)
+        )
+
     actions = ["abort"]
     if result["verdict"] == "major":
         actions = [
@@ -433,6 +777,13 @@ def cmd_plan(args: argparse.Namespace) -> int:
             "verdict": result["verdict"],
             "similarity": result["similarity"],
             "sections": result["sections"],
+            "images": {
+                "local": local_images,
+                "html": html_images,
+                "remote": len([item for item in images if item["kind"] == "remote"]),
+                "missing": missing,
+            },
+            "warnings": warnings,
             "stateFile": state_path(document["id"]),
             "next": actions,
         }
@@ -442,6 +793,24 @@ def cmd_plan(args: argparse.Namespace) -> int:
 
 def cmd_apply(args: argparse.Namespace) -> int:
     draft = read_text(args.draft, "draft")
+
+    # Catch this before the divergence question: a broken image is cheap to fix
+    # now and expensive to notice after the document is circulated.
+    if not args.skip_image_upload:
+        missing = [
+            item["reference"]
+            for item in collect_images(draft, args.draft)
+            if item["kind"] == "local" and not item["exists"]
+        ]
+        if missing:
+            die(
+                "draft references image files that do not exist:\n  "
+                + "\n  ".join(missing)
+                + "\nLinear cannot fetch a local path, so these would render as broken "
+                "images.\nFix the paths, or pass --skip-image-upload to write the "
+                "references as-is."
+            )
+
     document = doc_by_url(args.url)
     existing = document.get("content") or ""
     result = compare(existing, draft)
@@ -465,6 +834,28 @@ def cmd_apply(args: argparse.Namespace) -> int:
             die(str(error))
     else:
         body = draft
+
+    # Rewrite after the divergence guard, so a refused apply uploads nothing.
+    # The <img> conversion runs either way: Linear renders no raw HTML, so a
+    # skipped upload still has to come back as markdown.
+    session_file = state_path(document["id"])
+    previous: dict = {}
+    if os.path.exists(session_file):
+        with open(session_file, encoding="utf-8") as handle:
+            previous = json.load(handle)
+    asset_cache = dict(previous.get("assetCache") or {})
+
+    uploads: list[dict] = []
+    try:
+        body, uploads = prepare_body(
+            body,
+            args.draft,
+            args.public_assets,
+            upload=not args.skip_image_upload,
+            cache=asset_cache,
+        )
+    except UserError as error:
+        die(str(error))
 
     title = args.title or document["title"]
     unchanged = normalize(body) == normalize(existing)
@@ -516,6 +907,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
         "baseCommentIds": [node["id"] for node in document["comments"]["nodes"]],
         "collectedIds": [],
         "reportedEdits": {},
+        "assetCache": asset_cache,
     }
     save_session(session)
 
@@ -525,6 +917,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
             "mode": args.mode,
             "verdict": result["verdict"],
             "wrote": not unchanged,
+            "imagesUploaded": uploads,
             "session": state_path(document["id"]),
         }
     )
@@ -804,6 +1197,16 @@ def main(argv: list[str]) -> int:
         "--confirmed",
         action="store_true",
         help="the user chose this on a `major` divergence",
+    )
+    p.add_argument(
+        "--public-assets",
+        action="store_true",
+        help="upload images publicly reachable instead of Linear's authenticated asset store",
+    )
+    p.add_argument(
+        "--skip-image-upload",
+        action="store_true",
+        help="write image references as-is, leaving them unrenderable",
     )
     p.set_defaults(func=cmd_apply)
 

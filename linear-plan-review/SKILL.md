@@ -75,6 +75,11 @@ Writes the body and opens the review session that `collect` measures against.
 `--confirmed` is needed only after a `major` verdict, and only once the user has
 chosen. `--title "…"` renames the document too; use it only if the user asked.
 
+Before writing, `apply` makes the draft renderable in Linear: it uploads local
+images and flattens the syntaxes Linear rewrites anyway. See **Images** below —
+if the draft has a local screenshot in it, this is the step that stops it landing
+as "failed to load image".
+
 ### 3. Hand it to the user
 
 Say, in two or three lines, that the document is ready, with the link, and that
@@ -112,6 +117,38 @@ $S end --url "<url>"
 Closes the session once the summary is forwarded. Skip it if the user wants
 another round — applying again refreshes the baseline.
 
+## Images
+
+A draft that references a local file (`![](./diagram.png)`, a screenshot path, an
+`<img>` tag) cannot work as written: Linear fetches images over HTTP, so a path on
+the author's disk renders as **failed to load image**. `apply` fixes the draft on
+the way in, and `plan` tells you what it is going to do first:
+
+| in the draft | what `apply` does |
+|---|---|
+| `![alt](./shot.png)` | uploads the file, rewrites the reference to the asset URL |
+| `<img src="./shot.png">` | uploads it and converts the tag to markdown |
+| `![alt][ref]` + `[ref]: ./shot.png` | uploads it and inlines both |
+| `![alt](https://…)` | left alone; Linear re-hosts remote images itself |
+
+`plan` reports these under `images` and lists anything it has to warn about in
+`warnings`. A local file that does not exist stops `apply` before anything is
+written, because writing it would reproduce the broken image — fix the path, or
+pass `--skip-image-upload` to write the references as they are.
+
+Two flags worth knowing:
+
+- `--public-assets` uploads to `public.linear.app`, readable by anyone with the
+  link. The default stays private in Linear's own asset store, which is what
+  Linear does for images pasted into a document, and which any signed-in
+  teammate can view.
+- `--skip-image-upload` writes the body without uploading. `<img>` tags are still
+  converted to markdown, since Linear renders no raw HTML.
+
+Uploads are keyed by file content and remembered in the review session, so
+re-applying the same draft reuses the assets already in the document instead of
+pushing the same screenshot up again.
+
 ## Rules
 
 - **`plan` before `apply`, always.** The diff is the only thing standing between
@@ -123,6 +160,9 @@ another round — applying again refreshes the baseline.
   comments or replies to it.
 - **One session per document.** Re-running `apply` on an open session replaces the
   baseline; it does not stack sessions.
+- **Let `apply` handle images.** Do not hand-edit a draft to strip `<img>` tags
+  or paste asset URLs into it; the upload, the rewrite and the de-duplication all
+  live in one place, and doing it by hand is how the broken-image bug comes back.
 - **Do not summarize from memory.** `collect` reads Linear. What arrived after the
   write is exactly what the reviewer said.
 - The draft is markdown, and so is the document: headings in both are what make
