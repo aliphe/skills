@@ -1,5 +1,5 @@
 ---
-name: linear
+name: linear-plan-review
 description: Put a draft into a Linear document, have a human review it, and hand their comments back to the calling agent. Use when the user says "let's review this plan in document <url>", "put this in the doc for review", "share this with the team in Linear and collect comments", or wants a plan, PRD, spec, design or RFC circulated in a Linear document and the feedback returned before acting on it.
 ---
 
@@ -27,7 +27,7 @@ linear auth whoami
 Set the helper path once:
 
 ```bash
-S=~/.agents/skills/linear/scripts/linear_review.py
+S=~/.agents/skills/linear-plan-review/scripts/linear_review.py
 ```
 
 ## The loop
