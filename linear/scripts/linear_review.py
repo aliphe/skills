@@ -773,7 +773,11 @@ def cmd_end(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="linear_review.py", description=__doc__)
+    parser = argparse.ArgumentParser(
+        prog="linear_review.py",
+        description="Move a draft into a Linear document, open a review session, and summarize what the reviewers said.",
+        epilog="Run `plan` before `apply`.",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("whoami", help="the authenticated user").set_defaults(func=cmd_whoami)
