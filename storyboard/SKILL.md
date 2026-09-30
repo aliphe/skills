@@ -1,6 +1,6 @@
 ---
 name: storyboard
-description: Compose several annotated screenshots into one comics-style storyboard — a grid of numbered panels, each with a caption, plus optional speech bubbles and "what goes wrong" / "the fix" stamps. Renders a single PNG. Use when several screenshots have to be read as one sequence: a user journey, a before/after, a flow that goes wrong, an erroneous scenario, a bug walkthrough, or a refinement-doc story. Panel images are the annotated PNGs from the annotate-screenshot skill.
+description: "Compose several annotated screenshots into one comics-style storyboard — a grid of numbered panels, each with a caption, plus optional speech bubbles and \"what goes wrong\" / \"the fix\" stamps. Renders a single PNG. Use when several screenshots have to be read as one sequence: a user journey, a before/after, a flow that goes wrong, an erroneous scenario, a bug walkthrough, or a refinement-doc story. Panel images are the annotated PNGs from the annotate-screenshot skill."
 ---
 
 # Storyboard
