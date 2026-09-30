@@ -1,0 +1,43 @@
+{
+  "name": "esign-onboarding-statement",
+  "image": "/Users/matthias/.herdr/worktrees/monorepo/esign/docs/esign/screenshots/employee-onboarding-statement.png",
+  "scale": 2,
+  "dim": { "color": "#0b1020", "opacity": 0.34 },
+  "annotations": [
+    {
+      "type": "ring",
+      "rect": [743, 289, 449, 490],
+      "pad": 6,
+      "accent": "#0369a1"
+    },
+    {
+      "type": "note",
+      "kicker": "Read",
+      "title": "The policies to sign are fetched",
+      "endpoint": "GET /web/v2/memberships/{id}/sworn_statements",
+      "endpoint2": "?only_unsigned&only_required",
+      "lines": ["Recomputed on every GET /registration —", "nothing is stored, so the gate is live."],
+      "accent": "#0369a1",
+      "rect": [150, 200, 470],
+      "from": "right",
+      "pointsTo": [737, 380]
+    },
+    {
+      "type": "ring",
+      "rect": [747, 819, 205, 41],
+      "pad": 10,
+      "accent": "#c2410c"
+    },
+    {
+      "type": "note",
+      "kicker": "Write",
+      "title": "Accept signs every statement",
+      "endpoint": "PUT /web/v2/memberships/{id}/sign_sworn_statements",
+      "lines": ["One request signs every required + unsigned", "statement, then the gate is released."],
+      "accent": "#c2410c",
+      "rect": [150, 770, 470],
+      "from": "right",
+      "pointsTo": [737, 839]
+    }
+  ]
+}
