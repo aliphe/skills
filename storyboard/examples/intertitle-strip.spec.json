@@ -1,0 +1,37 @@
+{
+  "name": "intertitle-strip",
+  "title": "Storyboard without screenshots",
+  "subtitle": "intertitle panels only — a runnable smoke test, no images needed",
+  "width": 1400,
+  "columns": 2,
+  "panels": [
+    {
+      "kind": "intertitle",
+      "kicker": "Scene",
+      "title": "Panels are uniform",
+      "body": "Every panel keeps the same aspect, so the grid never wobbles.",
+      "caption": "Set panelAspect (default 1.6) once for the whole story."
+    },
+    {
+      "kind": "intertitle",
+      "kicker": "Scene",
+      "title": "Captions carry the plot",
+      "body": "One or two sentences per panel — the pictures carry the rest.",
+      "caption": "Long captions wrap on their own; keep them under four lines."
+    },
+    {
+      "kind": "error",
+      "kicker": "Scene",
+      "title": "Errors get a stamp",
+      "body": "kind: error turns the frame red and labels it.",
+      "caption": "Use it for the scenario that goes wrong."
+    },
+    {
+      "kind": "fix",
+      "kicker": "Scene",
+      "title": "Fixes get one too",
+      "body": "kind: fix is the green version of the same thing.",
+      "caption": "Add \"image\" plus a \"crop\" to any panel to drop an annotated screenshot in."
+    }
+  ]
+}
